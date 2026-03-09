@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { 
   Square, 
   Circle, 
@@ -24,7 +24,17 @@ import {
   Ungroup,
   Slash,
   FlipHorizontal,
-  FlipVertical
+  FlipVertical,
+  Lock,
+  Unlock,
+  Star,
+  Pencil,
+  Brush,
+  Eraser,
+  Paintbrush,
+  MousePointer2,
+  ChevronUp,
+  ChevronDown
 } from "lucide-react";
 import { useFabric } from "@/hooks/useFabric";
 import { cn } from "@/lib/utils";
@@ -34,13 +44,22 @@ export default function CanvasEditor() {
   const [activePanel, setActivePanel] = useState("elements");
   const [selectedObject, setSelectedObject] = useState(null);
   const [zoom, setZoom] = useState(100);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [uploadedFiles, setUploadedFiles] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [brushType, setBrushType] = useState("pencil");
+  const [layers, setLayers] = useState([]);
+  const [isLayersOpen, setIsLayersOpen] = useState(false);
+  const [customFonts, setCustomFonts] = useState(["Inter", "Outfit", "Roboto", "serif"]);
   const fileInputRef = useRef(null);
+  const fontInputRef = useRef(null);
 
   const { 
     canvas, 
     addShape, 
     addText, 
     addImage, 
+    addSVG,
     exportToFile,
     bringToFront,
     sendToBack,
@@ -50,8 +69,94 @@ export default function CanvasEditor() {
     ungroupObjects,
     updateStroke,
     updateFill,
-    flipObject
+    flipObject,
+    lockObject,
+    unlockObject,
+    toggleDrawingMode,
+    updateBrush,
+    copy,
+    paste,
+    getLayers,
+    updateDepth,
+    moveLayer,
+    undo,
+    redo
   } = useFabric("canvas-editor");
+
+  const deleteSelected = useCallback(() => {
+    if (canvas) {
+      const activeObjects = canvas.getActiveObjects();
+      canvas.discardActiveObject();
+      if (activeObjects.length > 0) {
+        canvas.remove(...activeObjects);
+      }
+      canvas.renderAll();
+    }
+  }, [canvas]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+      if (e.ctrlKey && e.key === 'g') {
+        e.preventDefault();
+        groupObjects();
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelected();
+      }
+      if (e.ctrlKey && e.key === 'c') {
+        e.preventDefault();
+        copy();
+      }
+      if (e.ctrlKey && e.key === 'v') {
+        e.preventDefault();
+        paste();
+      }
+      if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undo();
+      }
+      if (e.ctrlKey && e.key === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [groupObjects, copy, paste, undo, redo, deleteSelected, canvas]);
+
+  // Sync Layers List
+  useEffect(() => {
+    if (!canvas) return;
+    const sync = () => setLayers(getLayers());
+    canvas.on('object:added', sync);
+    canvas.on('object:removed', sync);
+    canvas.on('object:modified', sync);
+    return () => {
+        canvas.off('object:added', sync);
+        canvas.off('object:removed', sync);
+        canvas.off('object:modified', sync);
+    };
+  }, [canvas, getLayers]);
+
+  const handleFontUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const fontName = file.name.split('.')[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const newFont = new FontFace(fontName, `url(${event.target.result})`);
+        newFont.load().then((loaded) => {
+          document.fonts.add(loaded);
+          setCustomFonts(prev => [...prev, fontName]);
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   useEffect(() => {
     if (!canvas) return;
@@ -76,32 +181,42 @@ export default function CanvasEditor() {
   }, [canvas]);
 
   const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (f) => {
-        addImage(f.target.result);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isSVG = file.type === "image/svg+xml" || file.name.toLowerCase().endsWith(".svg");
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      const result = event.target?.result;
+      if (!result) return;
+
+      const newUpload = {
+        id: Date.now(),
+        url: result,
+        type: isSVG ? 'svg' : 'image',
+        name: file.name
       };
-      reader.readAsDataURL(file);
-    }
+
+      setUploadedFiles(prev => [newUpload, ...prev]);
+      
+      // Reset input value
+      e.target.value = "";
+    };
+
+    reader.readAsDataURL(file);
   };
 
-  const deleteSelected = () => {
-    if (canvas) {
-      const activeObjects = canvas.getActiveObjects();
-      canvas.discardActiveObject();
-      if (activeObjects.length > 0) {
-        canvas.remove(...activeObjects);
-      }
-      canvas.renderAll();
-    }
-  };
+
 
   const menuItems = [
+    { id: "select_tool", icon: MousePointer2, label: "Select" },
     { id: "templates", icon: Layout, label: "Templates" },
     { id: "elements", icon: Layers, label: "Elements" },
     { id: "text", icon: Type, label: "Text" },
+    { id: "draw", icon: Pencil, label: "Draw" },
     { id: "uploads", icon: Upload, label: "Uploads" },
+    { id: "layers", icon: Layers, label: "Layers" },
   ];
 
   const colors = [
@@ -125,17 +240,26 @@ export default function CanvasEditor() {
         {menuItems.map((item) => (
           <button
             key={item.id}
-            onClick={() => setActivePanel(item.id)}
+            onClick={() => {
+              if (item.id === "select_tool") {
+                setIsDrawing(false);
+                toggleDrawingMode(false);
+              } else if (item.id === "layers") {
+                setIsLayersOpen(!isLayersOpen);
+              } else {
+                setActivePanel(item.id);
+              }
+            }}
             className={cn(
               "flex flex-col items-center gap-1 group transition-all duration-200",
-              activePanel === item.id ? "text-violet-400" : "text-slate-400 hover:text-white"
+              (activePanel === item.id || (item.id === "select_tool" && !isDrawing) || (item.id === "layers" && isLayersOpen)) ? "text-violet-400" : "text-slate-400 hover:text-white"
             )}
           >
             <div className={cn(
               "p-2.5 rounded-xl transition-all duration-300",
-              activePanel === item.id ? "bg-white/10 shadow-inner" : "group-hover:bg-white/5"
+              (activePanel === item.id || (item.id === "select_tool" && !isDrawing) || (item.id === "layers" && isLayersOpen)) ? "bg-white/10 shadow-inner" : "group-hover:bg-white/5"
             )}>
-              <item.icon size={22} strokeWidth={activePanel === item.id ? 2.5 : 2} />
+              <item.icon size={22} strokeWidth={(activePanel === item.id || (item.id === "select_tool" && !isDrawing) || (item.id === "layers" && isLayersOpen)) ? 2.5 : 2} />
             </div>
             <span className="text-[10px] uppercase font-bold tracking-wider">{item.label}</span>
           </button>
@@ -160,108 +284,121 @@ export default function CanvasEditor() {
                 key="elements"
                 className="space-y-6"
               >
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold">Elements</h2>
-                  <div className="relative flex-1 ml-4">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                    <input 
-                      type="text" 
-                      placeholder="Search elements" 
-                      className="w-full bg-slate-100 rounded-full py-2 pl-10 pr-4 text-xs focus:ring-2 focus:ring-violet-500 outline-none transition-all"
-                    />
+                <div className="flex flex-col gap-4 sticky top-0 bg-white z-10 pb-4 border-b border-slate-50">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-bold">Elements</h2>
+                    <div className="relative flex-1 ml-4">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                      <input 
+                        type="text" 
+                        placeholder="Search elements" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full bg-slate-100 rounded-full py-2.5 pl-10 pr-4 text-xs focus:ring-2 focus:ring-violet-500 outline-none transition-all border border-transparent focus:bg-white"
+                      />
+                    </div>
                   </div>
+                  
+                  {searchQuery && (
+                    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                       {[
+                         { label: 'Shapes', icon: Square },
+                         { label: 'Web Photos', icon: ImageIcon },
+                         { label: '3D Art', icon: PlusCircle }
+                       ].map(cat => (
+                         <button 
+                           key={cat.label}
+                           onClick={() => setSearchQuery(cat.label.toLowerCase())}
+                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-[10px] font-bold text-slate-600 hover:bg-violet-100 hover:text-violet-700 transition-colors whitespace-nowrap border border-slate-200 shadow-sm"
+                         >
+                            <cat.icon size={12} />
+                            {cat.label}
+                         </button>
+                       ))}
+                    </div>
+                  )}
                 </div>
                 
-                <section>
-                  <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">Recently used</h3>
-                  <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
-                    {[
-                      { icon: Square, fill: '#1e293b' },
-                      { icon: Circle, fill: '#334155' }
-                    ].map((item, i) => (
-                      <button 
-                        key={i}
-                        onClick={() => addShape(item.icon === Square ? 'rect' : 'circle', { fill: item.fill })}
-                        className="w-16 h-16 shrink-0 rounded-xl bg-slate-100 flex items-center justify-center hover:bg-slate-200 transition-colors shadow-sm"
-                      >
-                         <item.icon size={24} style={{ color: item.fill }} fill={item.fill} />
-                      </button>
-                    ))}
-                  </div>
-                </section>
+                {/* Search Results / Content */}
+                <div className="space-y-8">
+                    <section>
+                    <div className="flex items-center justify-between mb-3 border-l-4 border-violet-500 pl-3">
+                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Shapes</h3>
+                        <button className="text-[10px] font-bold text-violet-600">See all</button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                        {[
+                        { type: 'rect', icon: Square, label: 'Square' },
+                        { type: 'circle', icon: Circle, label: 'Circle' },
+                        { type: 'triangle', icon: Triangle, label: 'Triangle' },
+                        { type: 'star', icon: Star, label: 'Star' },
+                        { type: 'rect', icon: Minus, label: 'Line' },
+                        ].filter(shape => !searchQuery || shape.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery.toLowerCase() === 'shapes')
+                        .map((shape, i) => (
+                        <button 
+                            key={shape.type + i}
+                            onClick={() => addShape(shape.type, shape.label === 'Line' ? { height: 2, width: 200, fill: '#000000' } : {})}
+                            className="aspect-square rounded-xl bg-slate-50 border border-slate-100 hover:border-violet-400 flex flex-col items-center justify-center hover:bg-white transition-all shadow-sm group"
+                            title={shape.label}
+                        >
+                            <shape.icon size={20} className="text-slate-700 group-hover:text-violet-600 group-hover:scale-110 transition-transform" />
+                        </button>
+                        ))}
+                    </div>
+                    </section>
 
-                <section>
-                  <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">Shapes</h3>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { type: 'rect', icon: Square, label: 'Square' },
-                      { type: 'circle', icon: Circle, label: 'Circle' },
-                      { type: 'triangle', icon: Triangle, label: 'Triangle' },
-                    ].map((shape) => (
-                      <button 
-                        key={shape.type}
-                        onClick={() => addShape(shape.type)}
-                        className="aspect-square rounded-xl border-2 border-slate-50 hover:border-violet-500 flex flex-col items-center justify-center gap-2 hover:bg-violet-50 transition-all group shadow-sm bg-slate-50/50"
-                      >
-                        <shape.icon size={24} className="text-slate-700 group-hover:text-violet-600" />
-                        <span className="text-[10px] font-bold text-slate-500">{shape.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-                <section>
-                  <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">Outlined Shapes</h3>
-                  <div className="grid grid-cols-3 gap-3">
-                    {[
-                      { type: 'rect', icon: Square, label: 'Border Rect' },
-                      { type: 'circle', icon: Circle, label: 'Border Circle' },
-                      { type: 'triangle', icon: Triangle, label: 'Border Tri' },
-                    ].map((shape) => (
-                      <button 
-                        key={shape.type}
-                        onClick={() => addShape(shape.type, { fill: 'transparent', stroke: '#000000', strokeWidth: 2 })}
-                        className="aspect-square rounded-xl border-2 border-slate-50 hover:border-violet-500 flex flex-col items-center justify-center gap-2 hover:bg-violet-50 transition-all group shadow-sm bg-white"
-                      >
-                        <shape.icon size={24} className="text-slate-700 group-hover:text-violet-600" />
-                        <span className="text-[10px] font-bold text-slate-500">{shape.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
+                    <section>
+                    <div className="flex items-center justify-between mb-3 border-l-4 border-blue-500 pl-3">
+                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">{searchQuery ? `Web Search for "${searchQuery}"` : "Photos"}</h3>
+                        <button className="text-[10px] font-bold text-blue-600">See all</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        {(searchQuery ? [1,2,3,4,5,6] : [20, 21, 22, 23]).map((id) => {
+                            const query = searchQuery || "nature";
+                            return (
+                                <div 
+                                    key={id}
+                                    onClick={() => addImage(`https://loremflickr.com/800/600/${query}?lock=${id}`, { width: 250 })}
+                                    className="aspect-[4/3] rounded-xl overflow-hidden cursor-pointer relative group border border-slate-200 bg-slate-100"
+                                >
+                                    <img 
+                                        src={`https://loremflickr.com/200/150/${query}?lock=${id}`} 
+                                        alt={query} 
+                                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                                    />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                         <PlusCircle size={24} className="text-white drop-shadow-lg" />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    </section>
 
-                <section>
-                  <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">Graphics</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[1, 2, 3, 4, 5, 6].map((i) => (
-                      <div key={i} className="aspect-square rounded-xl bg-slate-100 border border-slate-200 cursor-pointer overflow-hidden relative group">
-                        <img 
-                          src={`https://api.dicebear.com/7.x/shapes/svg?seed=${i+100}`} 
-                          alt="Graphic" 
-                          className="w-full h-full object-contain p-2 group-hover:scale-110 transition-transform duration-500"
-                          onClick={() => addImage(`https://api.dicebear.com/7.x/shapes/svg?seed=${i+100}`, { width: 150 })}
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-
-                <section>
-                   <h3 className="text-sm font-semibold text-slate-500 mb-3 uppercase tracking-wider">3D Illustrations</h3>
-                   <div className="grid grid-cols-2 gap-3">
-                    {[1, 2].map((i) => (
-                      <div key={i} className="aspect-video rounded-xl bg-gradient-to-br from-indigo-50 to-blue-100 border border-indigo-100 cursor-pointer overflow-hidden relative group flex items-center justify-center shadow-sm">
-                        <img 
-                          src={`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${i+50}`} 
-                          alt="3D Illustration" 
-                          className="w-16 h-16 group-hover:scale-125 transition-transform duration-500"
-                          onClick={() => addImage(`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${i+50}`, { scaleX: 1.5, scaleY: 1.5 })}
-                        />
-                         <span className="absolute bottom-1 right-2 text-[8px] font-black text-indigo-400 uppercase">3D</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                    <section>
+                    <div className="flex items-center justify-between mb-3 border-l-4 border-purple-500 pl-3">
+                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">3D Art</h3>
+                        <button className="text-[10px] font-bold text-purple-600">See all</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        {[1, 2, 3, 4].map(i => ({ id: i, label: `Hero Bot ${i}` }))
+                        .filter(item => !searchQuery || item.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery.toLowerCase().includes('3d'))
+                        .map((item) => (
+                        <div 
+                            key={item.id} 
+                            onClick={() => addImage(`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${item.id+50}`, { scaleX: 1.5, scaleY: 1.5 })}
+                            className="aspect-square rounded-2xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-slate-100 cursor-pointer overflow-hidden relative group flex items-center justify-center hover:shadow-lg transition-all"
+                        >
+                            <img 
+                                src={`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${item.id+50}`} 
+                                alt={item.label}
+                                className="w-16 h-16 group-hover:scale-125 transition-transform duration-500"
+                            />
+                        </div>
+                        ))}
+                    </div>
+                    </section>
+                </div>
               </motion.div>
             )}
 
@@ -273,52 +410,161 @@ export default function CanvasEditor() {
                 key="text"
                 className="space-y-6"
               >
-                <h2 className="text-xl font-bold mb-4">Add Text</h2>
-                <div className="space-y-3">
+                <div className="flex flex-col gap-4 sticky top-0 bg-white z-10 pb-4 border-b border-slate-50">
+                  <h2 className="text-xl font-bold">Text</h2>
+                      <div className="flex gap-2">
+                         <label className="flex-1 bg-violet-50 text-violet-600 p-2 rounded-lg text-xs font-bold text-center cursor-pointer hover:bg-violet-100 transition-colors">
+                            Import Font
+                            <input type="file" ref={fontInputRef} hidden accept=".ttf,.otf,.woff" onChange={handleFontUpload} />
+                         </label>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <button
+                        onClick={() => addText("Heading", { fontSize: 60, fontWeight: "bold" })}
+                        className="w-full text-left p-4 rounded-xl border border-slate-100 hover:border-violet-500 hover:bg-violet-50 transition-all group"
+                      >
+                        <h1 className="text-2xl font-bold group-hover:text-violet-600">Add a Heading</h1>
+                      </button>
+                      <button
+                        onClick={() => addText("Subheading", { fontSize: 32, fontWeight: "medium" })}
+                        className="w-full text-left p-4 rounded-xl border border-slate-100 hover:border-violet-500 hover:bg-violet-50 transition-all group"
+                      >
+                        <h2 className="text-xl font-medium group-hover:text-violet-600">Add a Subheading</h2>
+                      </button>
+                      <button
+                        onClick={() => addText("Body text", { fontSize: 18 })}
+                        className="w-full text-left p-4 rounded-xl border border-slate-100 hover:border-violet-500 hover:bg-violet-50 transition-all group"
+                      >
+                        <p className="text-sm group-hover:text-violet-600">Add body text</p>
+                      </button>
+                    </div>
+              </motion.div>
+            )}
+
+            {activePanel === "draw" && (
+              <motion.div
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                key="draw"
+                className="space-y-6"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold">Creative Drawing</h2>
+                  <div className={cn(
+                    "w-3 h-3 rounded-full animate-pulse",
+                    isDrawing ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "bg-slate-200"
+                  )} />
+                </div>
+
+                <div className="p-1 bg-slate-100 rounded-2xl flex">
                   <button 
-                    onClick={() => addText("Add a heading", { fontSize: 48, fontWeight: 'bold' })}
-                    className="w-full p-4 rounded-xl border-2 border-slate-100 hover:border-violet-500 text-left hover:bg-violet-50 transition-all flex items-center justify-between group shadow-sm"
+                    onClick={() => {
+                        setIsDrawing(true);
+                        toggleDrawingMode(true, "pencil");
+                        setBrushType("pencil");
+                    }}
+                    className={cn(
+                        "flex-1 py-3 rounded-xl flex flex-col items-center gap-1 transition-all",
+                        isDrawing && brushType === "pencil" ? "bg-white shadow-sm text-violet-600" : "text-slate-500 hover:text-slate-800"
+                    )}
                   >
-                    <h1 className="text-2xl font-bold">Heading</h1>
-                    <Plus size={18} className="text-slate-300 group-hover:text-violet-500" />
+                    <Pencil size={20} />
+                    <span className="text-[10px] font-bold uppercase">Pencil</span>
                   </button>
                   <button 
-                    onClick={() => addText("Add a subheading", { fontSize: 24, fontWeight: 'semibold' })}
-                    className="w-full p-4 rounded-xl border-2 border-slate-100 hover:border-violet-500 text-left hover:bg-violet-50 transition-all flex items-center justify-between group shadow-sm"
+                    onClick={() => {
+                        setIsDrawing(true);
+                        toggleDrawingMode(true, "spray");
+                        setBrushType("spray");
+                    }}
+                    className={cn(
+                        "flex-1 py-3 rounded-xl flex flex-col items-center gap-1 transition-all",
+                        isDrawing && brushType === "spray" ? "bg-white shadow-sm text-violet-600" : "text-slate-500 hover:text-slate-800"
+                    )}
                   >
-                    <h2 className="text-lg font-semibold text-slate-700">Subheading</h2>
-                    <Plus size={18} className="text-slate-300 group-hover:text-violet-500" />
+                    <Brush size={20} />
+                    <span className="text-[10px] font-bold uppercase">Sketch</span>
                   </button>
                   <button 
-                    onClick={() => addText("Add a little bit of body text", { fontSize: 16 })}
-                    className="w-full p-4 rounded-xl border-2 border-slate-100 hover:border-violet-500 text-left hover:bg-violet-50 transition-all flex items-center justify-between group shadow-sm"
+                    onClick={() => {
+                        setIsDrawing(false);
+                        toggleDrawingMode(false);
+                        setBrushType("");
+                    }}
+                    className={cn(
+                        "flex-1 py-3 rounded-xl flex flex-col items-center gap-1 transition-all text-slate-500 hover:text-red-500",
+                        !isDrawing ? "bg-white shadow-sm" : ""
+                    )}
                   >
-                    <p className="text-sm text-slate-500">Body text</p>
-                    <Plus size={18} className="text-slate-300 group-hover:text-violet-500" />
+                    <PlusCircle size={20} className="rotate-45" />
+                    <span className="text-[10px] font-bold uppercase">Select</span>
                   </button>
                 </div>
 
-                <div className="pt-6">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Featured Font Combinations</h3>
-                  <div className="grid grid-cols-1 gap-4">
-                     {[
-                        { title: 'BRIGHT', sub: 'Future', color: 'from-amber-400 to-orange-500' },
-                        { title: 'CREATIVE', sub: 'Studio', color: 'from-fuchsia-500 to-purple-600' }
-                     ].map((item, idx) => (
-                        <div 
-                          key={idx}
-                          onClick={() => {
-                            addText(item.title, { fontSize: 60, fill: '#ff0000', fontWeight: 'bold' });
-                            addText(item.sub, { fontSize: 32, top: 200 });
-                          }}
-                          className={`p-6 rounded-2xl bg-gradient-to-r ${item.color} text-white cursor-pointer hover:scale-[1.02] transition-transform shadow-lg`}
-                        >
-                           <p className="text-2xl font-black tracking-tighter uppercase leading-none">{item.title}</p>
-                           <p className="text-sm font-medium opacity-90">{item.sub}</p>
-                        </div>
-                     ))}
+                {isDrawing && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
+                    <section>
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Brush Style</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: 'pencil', label: 'Classic', icon: Pencil },
+                          { id: 'spray', label: 'Airbrush', icon: Brush },
+                          { id: 'circle', label: 'Bubble', icon: Circle }
+                        ].map(type => (
+                          <button
+                            key={type.id}
+                            onClick={() => {
+                                setBrushType(type.id);
+                                toggleDrawingMode(true, type.id);
+                            }}
+                            className={cn(
+                              "p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2",
+                              brushType === type.id ? "border-violet-600 bg-violet-50 text-violet-600 shadow-lg" : "border-slate-100 hover:border-slate-200"
+                            )}
+                          >
+                            <type.icon size={24} />
+                            <span className="text-[10px] font-bold">{type.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section>
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Ink Color</h3>
+                      <div className="grid grid-cols-6 gap-2">
+                        {colors.map(color => (
+                          <button 
+                            key={color}
+                            onClick={() => updateBrush({ color })}
+                            className="w-full aspect-square rounded-full border border-slate-100 hover:scale-110 shadow-sm transition-transform"
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    </section>
+
+                    <section>
+                       <div className="flex items-center justify-between mb-4">
+                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ink Thickness</h3>
+                         <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold text-slate-600 tracking-tighter">XL PRO</span>
+                       </div>
+                       <input 
+                         type="range" 
+                         min="1" max="100" 
+                         defaultValue="10"
+                         onChange={(e) => updateBrush({ width: e.target.value })}
+                         className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-violet-600"
+                       />
+                    </section>
+
+                    <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-700 text-white shadow-xl">
+                       <p className="text-xs font-bold opacity-80 mb-1">PRO TIP</p>
+                       <p className="text-sm font-medium">Use the <span className="underline">Sketch brush</span> for a spray-paint effect, best for creative backgrounds!</p>
+                    </div>
                   </div>
-                </div>
+                )}
               </motion.div>
             )}
 
@@ -328,19 +574,54 @@ export default function CanvasEditor() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
                 key="uploads"
-                className="space-y-6"
+                className="h-full flex flex-col"
               >
-                <h2 className="text-xl font-bold mb-4">Your Uploads</h2>
-                <label className="w-full p-10 border-2 border-dashed border-slate-200 rounded-3xl flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-violet-500 hover:bg-violet-50/50 transition-all group bg-slate-50/50">
-                  <div className="p-4 bg-violet-600 rounded-2xl shadow-lg shadow-violet-200 text-white group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300">
-                    <Upload size={32} />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-black text-slate-700 uppercase text-xs tracking-widest mb-1">Click to browse</p>
-                    <p className="text-sm text-slate-500">Images or SVG</p>
-                  </div>
-                  <input type="file" className="hidden" accept="image/*" onChange={handleFileUpload} />
-                </label>
+                <div className="p-6 pb-0">
+                  <h2 className="text-xl font-bold mb-4">Your Uploads</h2>
+                  <label className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3 px-4 rounded-xl flex items-center justify-center gap-3 cursor-pointer transition-all shadow-lg shadow-violet-500/20 font-bold mb-8 active:scale-95">
+                    <Upload size={20} />
+                    <span>Upload files</span>
+                    <input type="file" className="hidden" accept="image/*,.svg" onChange={handleFileUpload} />
+                  </label>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 pb-6 scrollbar-hide">
+                  {uploadedFiles.length === 0 ? (
+                    <div className="h-64 border-2 border-dashed border-slate-100 rounded-3xl flex flex-col items-center justify-center text-center p-6 gap-3">
+                      <div className="p-3 bg-slate-50 rounded-full text-slate-300">
+                        <ImageIcon size={32} />
+                      </div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No uploads yet</p>
+                      <p className="text-[10px] text-slate-400">Your uploaded images will appear here</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-3">
+                      {uploadedFiles.map((file) => (
+                        <div 
+                          key={file.id}
+                          onClick={() => {
+                            if (file.type === 'svg') {
+                              addSVG(file.url);
+                            } else {
+                              addImage(file.url);
+                            }
+                          }}
+                          className="aspect-square rounded-xl border border-slate-100 bg-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-violet-500 transition-all group relative"
+                        >
+                          {file.type === 'svg' ? (
+                            <div className="w-full h-full flex items-center justify-center p-2">
+                               <img src={file.url} alt={file.name} className="max-w-full max-h-full object-contain" />
+                               <span className="absolute top-1 right-1 bg-violet-500 text-[8px] text-white px-1.5 py-0.5 rounded font-black uppercase">SVG</span>
+                            </div>
+                          ) : (
+                            <img src={file.url} alt={file.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                          )}
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </motion.div>
             )}
 
@@ -385,238 +666,265 @@ export default function CanvasEditor() {
         </div>
       </div>
 
+      {/* Removed old placeholder */}
+
       {/* Main Content */}
-      <main className="flex-1 flex flex-col relative overflow-hidden bg-slate-100">
-        {/* Top Header */}
-        <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-10 shrink-0 shadow-sm">
-          <div className="flex items-center gap-4">
-             <div className="flex items-center gap-2 mr-4">
-                <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center text-white">
-                   <Plus size={18} />
-                </div>
-                <span className="font-bold text-slate-700">Project Workspace</span>
-             </div>
-            <span className="text-[10px] font-black uppercase tracking-tighter px-2 py-0.5 bg-violet-100 text-violet-700 rounded-md">Pro Editor</span>
-            <div className="w-[1px] h-6 bg-slate-200 mx-2" />
-            <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors">
-              <Undo2 size={18} />
-            </button>
-            <button className="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors">
-              <Redo2 size={18} />
-            </button>
-          </div>
+      <main className="flex-1 flex relative overflow-hidden bg-[#F1F5F9]">
+        <div className="flex-1 flex flex-col items-center">
+            {/* Top Header */}
+            <header className="w-full h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between z-10 shrink-0">
+               <div className="flex items-center gap-4">
+                 <span className="font-bold text-slate-700">Project Canvas</span>
+                 <div className="flex items-center bg-slate-100 rounded-lg p-1">
+                    <button className="p-1.5 hover:bg-white rounded hover:shadow-sm text-slate-500 transition-all" onClick={undo}><Undo2 size={16}/></button>
+                    <button className="p-1.5 hover:bg-white rounded hover:shadow-sm text-slate-500 transition-all" onClick={redo}><Redo2 size={16}/></button>
+                 </div>
+               </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center bg-slate-100 rounded-full px-4 py-1.5 mr-4 gap-4 border border-slate-200 shadow-sm transition-all hover:bg-slate-50">
-              <button onClick={() => setZoom(prev => Math.max(10, prev - 10))} className="text-slate-500 hover:text-slate-900"><Minus size={16}/></button>
-              <span className="text-xs font-bold w-10 text-center">{zoom}%</span>
-              <button onClick={() => setZoom(prev => Math.min(200, prev + 10))} className="text-slate-500 hover:text-slate-900"><Plus size={16}/></button>
-            </div>
-            
-            <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-              <button 
-                onClick={() => exportToFile("png")}
-                className="px-4 py-2 text-sm font-bold border-r border-slate-100 hover:bg-slate-50 flex items-center gap-2 group transition-colors"
-                title="Download as PNG"
-              >
-                <Download size={18} className="text-violet-600 group-hover:scale-110 transition-transform" />
-                <span>PNG</span>
-              </button>
-              <button 
-                onClick={() => exportToFile("svg")}
-                className="px-4 py-2 text-sm font-bold border-slate-100 hover:bg-slate-50 flex items-center gap-2 group transition-colors"
-                title="Download as SVG"
-              >
-                <Download size={18} className="text-violet-600 group-hover:scale-110 transition-transform" />
-                <span>SVG</span>
-              </button>
-            </div>
-          </div>
-        </header>
+               <div className="flex items-center gap-4">
+                 <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 gap-2">
+                    <button onClick={() => setZoom(prev => Math.max(10, prev - 10))} className="p-1 hover:bg-white rounded shadow-sm text-slate-400 hover:text-violet-600"><Minus size={14}/></button>
+                    <span className="text-[10px] font-black w-10 text-center tracking-tighter">{zoom}%</span>
+                    <button onClick={() => setZoom(prev => Math.min(200, prev + 10))} className="p-1 hover:bg-white rounded shadow-sm text-slate-400 hover:text-violet-600"><Plus size={14}/></button>
+                 </div>
+                 <button onClick={() => exportToFile('png')} className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-violet-500/30 flex items-center gap-2">
+                    <Download size={14}/> Export
+                 </button>
+               </div>
+            </header>
 
-        {/* Canvas Area */}
-        <div className="flex-1 overflow-auto p-12 flex items-center justify-center relative scrollbar-hide">
-          <div className="relative group/canvas">
-            <div className="canvas-container bg-white shadow-2xl overflow-hidden border border-slate-100 p-1">
-              <canvas id="canvas-editor" />
+            {/* Canvas Container */}
+            <div className="flex-1 w-full relative overflow-auto flex items-center justify-center p-20 scrollbar-hide">
+              <div 
+                className="bg-white shadow-[0_32px_64px_-16px_rgba(0,0,0,0.15)] transition-all duration-300 transform-gpu"
+                style={{
+                  width: "800px",
+                  height: "600px",
+                  minWidth: "800px",
+                  minHeight: "600px",
+                  zoom: zoom / 100,
+                  transformOrigin: "center center"
+                }}
+              >
+                <canvas id="canvas-editor" />
+              </div>
             </div>
-            
-            {/* Quick Actions (Appear when hover canvas) */}
-            <div className="absolute top-10 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-slate-900/95 text-white p-2.5 rounded-2xl shadow-2xl opacity-0 group-hover/canvas:opacity-100 border border-white/20 backdrop-blur-xl transition-all duration-300 transform scale-95 group-hover/canvas:scale-100 z-50">
-               <button 
-                 onClick={deleteSelected} 
-                 className="px-4 py-2 hover:bg-red-600/30 text-red-400 rounded-xl transition-colors flex items-center gap-2 text-[10px] font-black uppercase tracking-widest border border-red-500/50 shadow-lg shadow-red-500/10"
-               >
-                 <Trash2 size={16} />
-                 Delete Object
-               </button>
-               <div className="w-[1px] h-4 bg-white/20 mx-1" />
-               <button onClick={bringToFront} className="p-2 hover:bg-white/10 rounded-lg transition-colors group/tool" title="Bring to Front">
-                 <Layers size={16} className="text-slate-300 group-hover/tool:text-white" />
-               </button>
-               <button onClick={sendToBack} className="p-2 hover:bg-white/10 rounded-lg transition-colors group/tool" title="Send to Back">
-                 <Layers size={16} className="rotate-180 text-slate-300 group-hover/tool:text-white" />
-               </button>
-            </div>
-          </div>
-          
-          {/* Dynamic Grid Background Overlay */}
-          <div className="absolute inset-0 pointer-events-none opacity-[0.05]" style={{ 
-            backgroundImage: 'radial-gradient(#000 1px, transparent 0)',
-            backgroundSize: '24px 24px'
-          }} />
+
+            {/* Float Toolbar (Fixed Position) */}
+            {selectedObject && (
+              <motion.div 
+                initial={{ opacity: 0, y: 40, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                className="absolute bottom-10 left-1/2 -translate-x-1/2 px-4 py-3 bg-white/90 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl flex items-center gap-4 z-40 overflow-visible"
+              >
+                 {/* Color Picker Native */}
+                 <div className="flex flex-col items-center gap-1 group relative">
+                    <div className="w-8 h-8 rounded-full border-2 border-white shadow-md cursor-pointer overflow-hidden" style={{ background: selectedObject.fill }}>
+                       <input 
+                         type="color" 
+                         value={selectedObject.fill === 'transparent' ? '#ffffff' : selectedObject.fill}
+                         onChange={(e) => updateFill(e.target.value)}
+                         className="opacity-0 w-full h-full cursor-pointer"
+                       />
+                    </div>
+                    <span className="text-[8px] font-black uppercase text-slate-400">Fill</span>
+                 </div>
+
+                 {/* Stroke Picker Native */}
+                 <div className="flex flex-col items-center gap-1">
+                    <div className="w-8 h-8 rounded-full border-2 border-white shadow-md cursor-pointer overflow-hidden flex items-center justify-center bg-slate-50" style={{ borderColor: selectedObject.stroke || '#ddd' }}>
+                         <input 
+                           type="color" 
+                           value={selectedObject.stroke || '#000000'}
+                           onChange={(e) => updateStroke(e.target.value, selectedObject.strokeWidth || 2)}
+                           className="opacity-0 w-full h-full cursor-pointer"
+                         />
+                    </div>
+                    <span className="text-[8px] font-black uppercase text-slate-400">Border</span>
+                 </div>
+
+                 <div className="w-[1px] h-8 bg-slate-200 mx-2" />
+
+                 {/* Font Section for Text */}
+                 {selectedObject.type === 'i-text' && (
+                    <div className="flex items-center gap-2">
+                       <select 
+                         className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-700 outline-none hover:border-violet-500 transition-all w-24"
+                         value={selectedObject.fontFamily}
+                         onChange={(e) => {
+                             selectedObject.set('fontFamily', e.target.value);
+                             canvas.renderAll();
+                             setSelectedObject({...selectedObject, fontFamily: e.target.value});
+                         }}
+                       >
+                         {customFonts.map(f => (
+                           <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+                         ))}
+                       </select>
+                       <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-2 py-1 border border-slate-100">
+                          <Minus size={10} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
+                              const news = Math.max(1, (selectedObject.fontSize || 20) - 2);
+                              selectedObject.set('fontSize', news);
+                              canvas.renderAll();
+                              setSelectedObject({...selectedObject, fontSize: news});
+                          }}/>
+                          <span className="text-[10px] font-black w-6 text-center">{Math.round(selectedObject.fontSize)}</span>
+                          <Plus size={10} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
+                              const news = (selectedObject.fontSize || 20) + 2;
+                              selectedObject.set('fontSize', news);
+                              canvas.renderAll();
+                              setSelectedObject({...selectedObject, fontSize: news});
+                          }}/>
+                       </div>
+                    </div>
+                 )}
+
+                 <div className="w-[1px] h-8 bg-slate-200 mx-2" />
+
+                 <div className="flex items-center gap-1">
+                    <button onClick={groupObjects} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Group Objects">
+                        <Group size={16} className="text-violet-600" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Group</span>
+                    </button>
+                    <button onClick={ungroupObjects} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Ungroup Objects">
+                        <Ungroup size={16} className="text-orange-600" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Ungroup</span>
+                    </button>
+                    <button onClick={lockObject} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Lock">
+                        <Lock size={16} className="text-amber-500" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Lock</span>
+                    </button>
+                    
+                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
+                    
+                    <button onClick={bringToFront} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Bring to Front">
+                        <ChevronUp size={16} className="text-blue-500" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Front</span>
+                    </button>
+                    <button onClick={sendToBack} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Send to Back">
+                        <ChevronDown size={16} className="text-blue-500" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Back</span>
+                    </button>
+
+                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
+
+                    <button 
+                      onClick={() => setIsLayersOpen(!isLayersOpen)} 
+                      className={cn(
+                        "p-2 rounded-xl transition-all flex flex-col items-center gap-1",
+                        isLayersOpen ? "bg-violet-50 text-violet-600" : "hover:bg-slate-50 text-slate-400"
+                      )}
+                      title="Layers"
+                    >
+                        <Layers size={16} />
+                        <span className="text-[8px] font-black uppercase tracking-tighter">Layers</span>
+                    </button>
+
+                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
+
+                    <button onClick={deleteSelected} className="p-2 hover:bg-red-50 rounded-xl transition-all flex flex-col items-center gap-1 group" title="Delete">
+                        <Trash2 size={16} className="text-red-400 group-hover:text-red-600" />
+                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Delete</span>
+                    </button>
+                 </div>
+              </motion.div>
+            )}
         </div>
 
-        {/* Floating Contextual Toolbar */}
-        {selectedObject && (
-          <motion.div 
-            initial={{ y: 50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-white border border-slate-200 shadow-2xl rounded-3xl p-3 flex items-center gap-4 z-40 transition-all border-b-4 border-b-violet-500"
-          >
-             <div className="flex items-center gap-2 px-2">
-                 <div className="flex gap-1.5">
-                    {colors.map(color => (
-                        <button 
-                            key={color}
-                            onClick={() => updateColor(color)}
-                            className={cn(
-                                "w-6 h-6 rounded-full border border-slate-100 hover:scale-110 transition-transform",
-                                selectedObject.fill === color ? "ring-2 ring-violet-500 ring-offset-2" : ""
-                            )}
-                            style={{ backgroundColor: color }}
-                        />
-                    ))}
-                 </div>
-             </div>
-             <div className="w-[1px] h-8 bg-slate-200" />
-             <div className="flex items-center gap-2 px-2">
-                  <button 
-                    onClick={bringToFront}
-                    className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group"
-                    title="Bring to Front"
-                  >
-                      <Layers size={18} className="text-slate-600 group-hover:text-violet-600 font-bold" />
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Front</span>
+        {/* Right Sidebar - Layers (Only Show when isLayersOpen is true) */}
+        <AnimatePresence>
+          {isLayersOpen && (
+            <motion.aside 
+              initial={{ x: 260, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: 260, opacity: 0 }}
+              className="w-64 bg-white border-l border-slate-200 flex flex-col z-30 shadow-2xl relative"
+            >
+               <div className="p-6 border-b border-slate-50 flex items-center justify-between">
+                  <h2 className="text-sm font-black uppercase tracking-widest text-slate-800">Layers</h2>
+                  <button onClick={() => setIsLayersOpen(false)} className="text-slate-400 hover:text-slate-900 transition-colors">
+                     <Plus size={18} className="rotate-45" />
                   </button>
-                  <button 
-                    onClick={moveForward}
-                    className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group"
-                    title="Move Forward"
-                  >
-                      <Layers size={18} className="text-slate-600 group-hover:text-violet-600 opacity-70" />
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Forward</span>
-                  </button>
-                  <button 
-                    onClick={moveBackward}
-                    className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group"
-                    title="Move Backward"
-                  >
-                      <Layers size={18} className="text-slate-600 group-hover:text-violet-600 rotate-180 opacity-70" />
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Backward</span>
-                  </button>
-                  <button 
-                    onClick={sendToBack}
-                    className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group"
-                    title="Send to Back"
-                  >
-                      <Layers size={18} className="text-slate-600 group-hover:text-violet-600 rotate-180 font-bold" />
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Back</span>
-                  </button>
-                  
-                  <div className="w-[1px] h-8 bg-slate-200 mx-2" />
-                  
-                  {/* Border Controls */}
-                  <div className="flex flex-col gap-1 px-2 min-w-[120px] border-r border-slate-100 pr-4">
-                     <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Border</span>
-                        <div className="flex gap-1">
-                           {['#000000', '#f87171', '#60a5fa', '#34d399'].map(color => (
-                              <button 
-                                 key={color}
-                                 onClick={() => updateStroke(color, (selectedObject.strokeWidth > 0 ? selectedObject.strokeWidth : 2))}
-                                 className="w-3.5 h-3.5 rounded-full border border-slate-200 hover:scale-125 transition-transform"
-                                 style={{ backgroundColor: color }}
-                              />
-                           ))}
-                        </div>
-                     </div>
-                     <input 
-                        type="range" 
-                        min="0" 
-                        max="20" 
-                        step="1"
-                        value={selectedObject.strokeWidth || 0}
-                        onChange={(e) => updateStroke(selectedObject.stroke || '#000000', parseInt(e.target.value))}
-                        className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-violet-600"
-                     />
+               </div>
+               
+               <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-hide">
+                  {layers.length === 0 ? (
+                    <div className="h-40 flex flex-col items-center justify-center text-slate-300 gap-2 opacity-50">
+                       <Layers size={32} />
+                       <span className="text-[10px] font-bold uppercase tracking-widest text-center">Empty Canvas</span>
+                    </div>
+                  ) : (
+                    layers.map((layer, i) => (
+                        <motion.div 
+                          key={layer.id}
+                          layout
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("fromIndex", i);
+                          }}
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={(e) => {
+                            const from = e.dataTransfer.getData("fromIndex");
+                            moveLayer(parseInt(from), i);
+                          }}
+                          className={cn(
+                            "p-3 rounded-2xl border flex items-center gap-3 transition-all cursor-grab active:cursor-grabbing group bg-white",
+                            selectedObject?.id === layer.id ? "border-violet-500 bg-violet-50/50 shadow-md" : "border-slate-50 hover:bg-slate-50"
+                          )}
+                          onClick={() => {
+                              const obj = canvas.getObjects().find(o => o.id === layer.id || (`obj-${canvas.getObjects().indexOf(o)}` === layer.id));
+                              if (obj) {
+                                  canvas.setActiveObject(obj);
+                                  canvas.renderAll();
+                              }
+                          }}
+                        >
+                           <div className="w-10 h-10 rounded-lg bg-white border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 shadow-sm pointer-events-none">
+                              {layer.preview ? <img src={layer.preview} className="max-w-full max-h-full object-contain" alt="" /> : <div className="text-slate-300"><ImageIcon size={16}/></div>}
+                           </div>
+                           <div className="flex-1 min-w-0 pointer-events-none">
+                              <p className="text-[10px] font-black uppercase text-slate-400 leading-tight truncate">{layer.type}</p>
+                              <p className="text-xs font-bold text-slate-800 truncate">{layer.name}</p>
+                           </div>
+                           
+                           {/* Layer Control Buttons & Drag Handle */}
+                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="flex flex-col gap-0.5">
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); updateDepth(layer.id, 'up'); }}
+                                  className="p-1 hover:bg-white rounded text-slate-400 hover:text-violet-600 transition-all border border-transparent hover:border-slate-100"
+                                >
+                                  <ChevronUp size={12}/>
+                                </button>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); updateDepth(layer.id, 'down'); }}
+                                  className="p-1 hover:bg-white rounded text-slate-400 hover:text-violet-600 transition-all border border-transparent hover:border-slate-100"
+                                >
+                                  <ChevronDown size={12}/>
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-1 text-slate-300 ml-1">
+                                <div className="w-3 h-[1px] bg-current rounded-full" />
+                                <div className="w-3 h-[1px] bg-current rounded-full" />
+                                <div className="w-3 h-[1px] bg-current rounded-full" />
+                              </div>
+                           </div>
+                        </motion.div>
+                    ))
+                  )}
+               </div>
+
+               <div className="p-6 mt-auto bg-slate-50/50 border-t border-slate-100">
+                  <div className="p-4 rounded-2xl bg-[#0F172A] text-white shadow-xl relative overflow-hidden group">
+                      <div className="relative z-10">
+                         <p className="text-[10px] font-black opacity-80 mb-1 tracking-widest text-violet-400">LAYER SYSTEM</p>
+                         <p className="text-[10px] text-slate-400 leading-relaxed">Drag and drop layers to change their stacking order.</p>
+                      </div>
                   </div>
-
-                  {/* Fill Toggle */}
-                  <button 
-                    onClick={() => updateFill(selectedObject.fill === 'transparent' ? '#8b5cf6' : 'transparent')}
-                    className={cn(
-                        "p-2.5 rounded-xl transition-all flex flex-col items-center gap-1 group/fill",
-                        selectedObject.fill === 'transparent' ? "bg-violet-50 text-violet-600" : "hover:bg-slate-50 text-slate-600"
-                    )}
-                    title={selectedObject.fill === 'transparent' ? "Add Interior Color" : "Remove Interior Color (Border Only)"}
-                  >
-                      <Slash size={18} className={cn(selectedObject.fill === 'transparent' ? "text-violet-600 shrink-0" : "text-slate-400 group-hover/fill:text-red-500")} />
-                      <span className="text-[8px] font-bold uppercase">{selectedObject.fill === 'transparent' ? "Add Fill" : "No Fill"}</span>
-                  </button>
-
-                  <div className="w-[1px] h-8 bg-slate-200 mx-2" />
-                  
-                  {/* Flip Controls */}
-                  <div className="flex gap-1 border-r border-slate-100 pr-2">
-                      <button 
-                        onClick={() => flipObject('x')}
-                        className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group/flip"
-                        title="Flip Horizontal"
-                      >
-                          <FlipHorizontal size={18} className="text-slate-400 group-hover/flip:text-violet-600" />
-                          <span className="text-[8px] font-bold text-slate-400 uppercase">Flip H</span>
-                      </button>
-                      <button 
-                        onClick={() => flipObject('y')}
-                        className="p-2.5 hover:bg-slate-50 rounded-xl transition-colors flex flex-col items-center gap-1 group/flip"
-                        title="Flip Vertical"
-                      >
-                          <FlipVertical size={18} className="text-slate-400 group-hover/flip:text-violet-600" />
-                          <span className="text-[8px] font-bold text-slate-400 uppercase">Flip V</span>
-                      </button>
-                  </div>
-
-                  {selectedObject.type === "activeSelection" && (
-                    <button 
-                      onClick={groupObjects}
-                      className="p-2.5 hover:bg-violet-50 rounded-xl transition-colors flex flex-col items-center gap-1 group/btn"
-                      title="Group Objects"
-                    >
-                        <Group size={18} className="text-violet-600 group-hover/btn:scale-110 transition-transform" />
-                        <span className="text-[8px] font-bold text-violet-400 uppercase">Group</span>
-                    </button>
-                 )}
-
-                 {selectedObject.type === "group" && (
-                    <button 
-                      onClick={ungroupObjects}
-                      className="p-2.5 hover:bg-orange-50 rounded-xl transition-colors flex flex-col items-center gap-1 group/btn"
-                      title="Ungroup Objects"
-                    >
-                        <Ungroup size={18} className="text-orange-600 group-hover/btn:scale-110 transition-transform" />
-                        <span className="text-[8px] font-bold text-orange-400 uppercase">Ungroup</span>
-                    </button>
-                 )}
-
-                <div className="w-[1px] h-6 bg-slate-100 mx-1" />
-                <button onClick={deleteSelected} className="p-2.5 hover:bg-red-50 rounded-xl transition-colors flex flex-col items-center gap-1 group">
-                    <Trash2 size={18} className="text-red-500 group-hover:scale-110 transition-transform" />
-                    <span className="text-[8px] font-bold text-red-500 uppercase">Delete</span>
-                </button>
-             </div>
-          </motion.div>
-        )}
+               </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
       </main>
     </div>
   );
