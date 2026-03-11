@@ -192,7 +192,7 @@ export const useFabric = (canvasId) => {
           ...defaultOptions,
         });
         break;
-      case "star":
+      case "star": {
         const points = [];
         const numPoints = 5;
         const outerRadius = 50;
@@ -210,6 +210,86 @@ export const useFabric = (canvasId) => {
             left: c.width / 2 - outerRadius,
             top: c.height / 2 - outerRadius,
             ...defaultOptions
+        });
+        break;
+      }
+      case "ellipse":
+        shape = new fabric.Ellipse({
+          rx: 60,
+          ry: 40,
+          fill: "#10b981",
+          left: c.width / 2 - 60,
+          top: c.height / 2 - 40,
+          ...defaultOptions,
+        });
+        break;
+      case "hexagon": {
+        const sides = 6;
+        const radius = 50;
+        const hexPoints = [];
+        for (let i = 0; i < sides; i++) {
+          const angle = (i * 2 * Math.PI) / sides;
+          hexPoints.push({
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle)
+          });
+        }
+        shape = new fabric.Polygon(hexPoints, {
+          fill: "#6366f1",
+          left: c.width / 2 - radius,
+          top: c.height / 2 - radius,
+          ...defaultOptions
+        });
+        break;
+      }
+      case "pentagon": {
+        const sides = 5;
+        const radius = 50;
+        const pentPoints = [];
+        for (let i = 0; i < sides; i++) {
+          const angle = (i * 2 * Math.PI) / sides - Math.PI / 2;
+          pentPoints.push({
+            x: radius * Math.cos(angle),
+            y: radius * Math.sin(angle)
+          });
+        }
+        shape = new fabric.Polygon(pentPoints, {
+          fill: "#ec4899",
+          left: c.width / 2 - radius,
+          top: c.height / 2 - radius,
+          ...defaultOptions
+        });
+        break;
+      }
+      case "diamond":
+        shape = new fabric.Rect({
+          width: 80,
+          height: 80,
+          fill: "#f97316",
+          left: c.width / 2,
+          top: c.height / 2,
+          angle: 45,
+          originX: 'center',
+          originY: 'center',
+          ...defaultOptions,
+        });
+        break;
+      case "arrow":
+        shape = new fabric.Path("M 0 0 L 50 0 L 50 -15 L 80 10 L 50 35 L 50 20 L 0 20 Z", {
+          fill: "#3b82f6",
+          left: c.width / 2 - 40,
+          top: c.height / 2 - 10,
+          ...defaultOptions
+        });
+        break;
+      case "heart":
+        shape = new fabric.Path("M 272.70141,238.71731 C 206.46141,238.71731 152.70141,292.47731 152.70141,358.71731 C 152.70141,493.47282 288.63461,528.41746 380.00391,610.14612 C 487.63421,525.6845 607.30641,493.47282 607.30641,358.71731 C 607.30641,292.47731 553.54641,238.71731 487.30641,238.71731 C 440.32051,238.71731 399.93291,265.65781 380.00391,304.91174 C 360.07491,265.65781 319.68731,238.71731 272.70141,238.71731 z", {
+          fill: "#ef4444",
+          scaleX: 0.2,
+          scaleY: 0.2,
+          left: c.width / 2 - 45,
+          top: c.height / 2 - 40,
+          ...defaultOptions
         });
         break;
       default:
@@ -383,61 +463,37 @@ export const useFabric = (canvasId) => {
     const c = canvasRef.current;
     const activeObject = c.getActiveObject();
     
-    // In Fabric v7, we can use the Group constructor or toGroup if available on ActiveSelection
-    if (activeObject && activeObject.type === 'activeSelection') {
+    if (activeObject && (activeObject.type === 'activeSelection' || activeObject.type === 'ActiveSelection')) {
       try {
-        const objects = activeObject.removeAll();
-        const group = new fabric.Group(objects, {
-            canvas: c,
-            id: `group-${Date.now()}`
-        });
-        c.add(group);
+        const group = activeObject.toGroup();
+        group.set('id', `group-${Date.now()}`);
         c.setActiveObject(group);
-        c.renderAll();
+        group.setCoords();
+        c.requestRenderAll();
+        saveHistory();
       } catch (e) {
         console.error("Grouping Error:", e);
       }
     }
-  }, []);
+  }, [saveHistory]);
 
   const ungroupObjects = useCallback(() => {
     if (!canvasRef.current) return;
     const c = canvasRef.current;
     const activeObject = c.getActiveObject();
     
-    if (!activeObject || (activeObject.type !== 'group' && !activeObject._objects)) return;
-
-    try {
-        // Manual Unpack for perfect compatibility
-        const objects = activeObject.getObjects();
-        const groupMatrix = activeObject.calcTransformMatrix();
-        
-        // Remove the group but keep items ready
-        c.remove(activeObject);
-        c.discardActiveObject();
-
-        objects.forEach(obj => {
-            // Recalculate absolute world position from group center
-            const objMatrix = obj.calcTransformMatrix();
-            const worldMatrix = fabric.util.multiplyTransformMatrices(groupMatrix, objMatrix);
-            const transform = fabric.util.qrDecompose(worldMatrix);
-            
-            obj.set({
-                ...transform,
-                left: transform.translateX,
-                top: transform.translateY
-            });
-            c.add(obj);
-            obj.setCoords();
-        });
-
-        const selection = new fabric.ActiveSelection(objects, { canvas: c });
-        c.setActiveObject(selection);
-        c.renderAll();
-    } catch (e) {
-        console.error("Critical Ungroup Error:", e);
+    if (activeObject && activeObject.type === 'group') {
+      try {
+        const activeSelection = activeObject.toActiveSelection();
+        c.setActiveObject(activeSelection);
+        activeSelection.setCoords();
+        c.requestRenderAll();
+        saveHistory();
+      } catch (e) {
+        console.error("Ungrouping Error:", e);
+      }
     }
-  }, []);
+  }, [saveHistory]);
 
   const toggleDrawingMode = useCallback((enabled, type = "pencil") => {
     if (!canvasRef.current) return;
@@ -489,6 +545,25 @@ export const useFabric = (canvasId) => {
         activeObject.getObjects().forEach(obj => obj.set("fill", color));
       } else {
         activeObject.set("fill", color);
+      }
+      c.renderAll();
+    }
+  }, []);
+
+  const updateBorderRadius = useCallback((radius) => {
+    if (!canvasRef.current) return;
+    const c = canvasRef.current;
+    const activeObject = c.getActiveObject();
+    if (activeObject) {
+      const r = parseInt(radius);
+      if (activeObject.type === "activeSelection" || activeObject.type === "group") {
+        activeObject.getObjects().forEach(obj => {
+          if (obj.type === 'rect') {
+            obj.set({ rx: r, ry: r });
+          }
+        });
+      } else if (activeObject.type === 'rect') {
+        activeObject.set({ rx: r, ry: r });
       }
       c.renderAll();
     }
@@ -640,6 +715,7 @@ export const useFabric = (canvasId) => {
     ungroupObjects,
     updateStroke,
     updateFill,
+    updateBorderRadius,
     flipObject,
     lockObject,
     unlockObject,

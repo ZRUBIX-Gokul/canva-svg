@@ -20,12 +20,9 @@ import {
   Minus, 
   PlusCircle, 
   Menu,
-  Group,
-  Ungroup,
   Slash,
   FlipHorizontal,
   FlipVertical,
-  Lock,
   Unlock,
   Star,
   Pencil,
@@ -34,7 +31,13 @@ import {
   Paintbrush,
   MousePointer2,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Hexagon,
+  Pentagon,
+  Heart,
+  Diamond,
+  ArrowRight,
+  Ban
 } from "lucide-react";
 import { useFabric } from "@/hooks/useFabric";
 import { cn } from "@/lib/utils";
@@ -50,6 +53,7 @@ export default function CanvasEditor() {
   const [brushType, setBrushType] = useState("pencil");
   const [layers, setLayers] = useState([]);
   const [isLayersOpen, setIsLayersOpen] = useState(false);
+  const [isExportOpen, setIsExportOpen] = useState(false);
   const [customFonts, setCustomFonts] = useState(["Inter", "Outfit", "Roboto", "serif"]);
   const fileInputRef = useRef(null);
   const fontInputRef = useRef(null);
@@ -65,13 +69,10 @@ export default function CanvasEditor() {
     sendToBack,
     moveForward,
     moveBackward,
-    groupObjects,
-    ungroupObjects,
     updateStroke,
     updateFill,
+    updateBorderRadius,
     flipObject,
-    lockObject,
-    unlockObject,
     toggleDrawingMode,
     updateBrush,
     copy,
@@ -99,10 +100,6 @@ export default function CanvasEditor() {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-      if (e.ctrlKey && e.key === 'g') {
-        e.preventDefault();
-        groupObjects();
-      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         deleteSelected();
       }
@@ -126,7 +123,7 @@ export default function CanvasEditor() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [groupObjects, copy, paste, undo, redo, deleteSelected, canvas]);
+  }, [copy, paste, undo, redo, deleteSelected, canvas]);
 
   // Sync Layers List
   useEffect(() => {
@@ -211,7 +208,6 @@ export default function CanvasEditor() {
 
   const menuItems = [
     { id: "select_tool", icon: MousePointer2, label: "Select" },
-    { id: "templates", icon: Layout, label: "Templates" },
     { id: "elements", icon: Layers, label: "Elements" },
     { id: "text", icon: Type, label: "Text" },
     { id: "draw", icon: Pencil, label: "Draw" },
@@ -251,7 +247,6 @@ export default function CanvasEditor() {
               }
             }}
             className={cn(
-              "flex flex-col items-center gap-1 group transition-all duration-200",
               (activePanel === item.id || (item.id === "select_tool" && !isDrawing) || (item.id === "layers" && isLayersOpen)) ? "text-violet-400" : "text-slate-400 hover:text-white"
             )}
           >
@@ -324,16 +319,21 @@ export default function CanvasEditor() {
                     <section>
                     <div className="flex items-center justify-between mb-3 border-l-4 border-violet-500 pl-3">
                         <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Shapes</h3>
-                        <button className="text-[10px] font-bold text-violet-600">See all</button>
                     </div>
                     <div className="grid grid-cols-4 gap-2">
                         {[
-                        { type: 'rect', icon: Square, label: 'Square' },
-                        { type: 'circle', icon: Circle, label: 'Circle' },
-                        { type: 'triangle', icon: Triangle, label: 'Triangle' },
-                        { type: 'star', icon: Star, label: 'Star' },
-                        { type: 'rect', icon: Minus, label: 'Line' },
-                        ].filter(shape => !searchQuery || shape.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery.toLowerCase() === 'shapes')
+                          { type: 'rect', icon: Square, label: 'Square' },
+                          { type: 'circle', icon: Circle, label: 'Circle' },
+                          { type: 'ellipse', icon: Circle, label: 'Ellipse' },
+                          { type: 'triangle', icon: Triangle, label: 'Triangle' },
+                          { type: 'star', icon: Star, label: 'Star' },
+                          { type: 'hexagon', icon: Hexagon, label: 'Hexagon' },
+                          { type: 'pentagon', icon: Pentagon, label: 'Pentagon' },
+                          { type: 'diamond', icon: Diamond, label: 'Diamond' },
+                          { type: 'heart', icon: Heart, label: 'Heart' },
+                          { type: 'arrow', icon: ArrowRight, label: 'Arrow' },
+                          { type: 'rect', icon: Minus, label: 'Line' },
+                        ].filter(shape => !searchQuery || shape.label.toLowerCase().includes(searchQuery.toLowerCase()))
                         .map((shape, i) => (
                         <button 
                             key={shape.type + i}
@@ -341,63 +341,12 @@ export default function CanvasEditor() {
                             className="aspect-square rounded-xl bg-slate-50 border border-slate-100 hover:border-violet-400 flex flex-col items-center justify-center hover:bg-white transition-all shadow-sm group"
                             title={shape.label}
                         >
-                            <shape.icon size={20} className="text-slate-700 group-hover:text-violet-600 group-hover:scale-110 transition-transform" />
+                            <shape.icon size={20} className={cn("text-slate-700 group-hover:text-violet-600 group-hover:scale-110 transition-transform", shape.type === 'diamond' && 'rotate-45')} />
                         </button>
                         ))}
                     </div>
                     </section>
 
-                    <section>
-                    <div className="flex items-center justify-between mb-3 border-l-4 border-blue-500 pl-3">
-                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">{searchQuery ? `Web Search for "${searchQuery}"` : "Photos"}</h3>
-                        <button className="text-[10px] font-bold text-blue-600">See all</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                        {(searchQuery ? [1,2,3,4,5,6] : [20, 21, 22, 23]).map((id) => {
-                            const query = searchQuery || "nature";
-                            return (
-                                <div 
-                                    key={id}
-                                    onClick={() => addImage(`https://loremflickr.com/800/600/${query}?lock=${id}`, { width: 250 })}
-                                    className="aspect-[4/3] rounded-xl overflow-hidden cursor-pointer relative group border border-slate-200 bg-slate-100"
-                                >
-                                    <img 
-                                        src={`https://loremflickr.com/200/150/${query}?lock=${id}`} 
-                                        alt={query} 
-                                        className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                                    />
-                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                                         <PlusCircle size={24} className="text-white drop-shadow-lg" />
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    </section>
-
-                    <section>
-                    <div className="flex items-center justify-between mb-3 border-l-4 border-purple-500 pl-3">
-                        <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">3D Art</h3>
-                        <button className="text-[10px] font-bold text-purple-600">See all</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                        {[1, 2, 3, 4].map(i => ({ id: i, label: `Hero Bot ${i}` }))
-                        .filter(item => !searchQuery || item.label.toLowerCase().includes(searchQuery.toLowerCase()) || searchQuery.toLowerCase().includes('3d'))
-                        .map((item) => (
-                        <div 
-                            key={item.id} 
-                            onClick={() => addImage(`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${item.id+50}`, { scaleX: 1.5, scaleY: 1.5 })}
-                            className="aspect-square rounded-2xl bg-gradient-to-br from-indigo-50 to-blue-50 border border-slate-100 cursor-pointer overflow-hidden relative group flex items-center justify-center hover:shadow-lg transition-all"
-                        >
-                            <img 
-                                src={`https://api.dicebear.com/7.x/bottts-neutral/svg?seed=${item.id+50}`} 
-                                alt={item.label}
-                                className="w-16 h-16 group-hover:scale-125 transition-transform duration-500"
-                            />
-                        </div>
-                        ))}
-                    </div>
-                    </section>
                 </div>
               </motion.div>
             )}
@@ -574,94 +523,77 @@ export default function CanvasEditor() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
                 key="uploads"
-                className="h-full flex flex-col"
-              >
-                <div className="p-6 pb-0">
-                  <h2 className="text-xl font-bold mb-4">Your Uploads</h2>
-                  <label className="w-full bg-violet-600 hover:bg-violet-700 text-white py-3 px-4 rounded-xl flex items-center justify-center gap-3 cursor-pointer transition-all shadow-lg shadow-violet-500/20 font-bold mb-8 active:scale-95">
-                    <Upload size={20} />
-                    <span>Upload files</span>
-                    <input type="file" className="hidden" accept="image/*,.svg" onChange={handleFileUpload} />
-                  </label>
-                </div>
-
-                <div className="flex-1 overflow-y-auto px-6 pb-6 scrollbar-hide">
-                  {uploadedFiles.length === 0 ? (
-                    <div className="h-64 border-2 border-dashed border-slate-100 rounded-3xl flex flex-col items-center justify-center text-center p-6 gap-3">
-                      <div className="p-3 bg-slate-50 rounded-full text-slate-300">
-                        <ImageIcon size={32} />
-                      </div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">No uploads yet</p>
-                      <p className="text-[10px] text-slate-400">Your uploaded images will appear here</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-3">
-                      {uploadedFiles.map((file) => (
-                        <div 
-                          key={file.id}
-                          onClick={() => {
-                            if (file.type === 'svg') {
-                              addSVG(file.url);
-                            } else {
-                              addImage(file.url);
-                            }
-                          }}
-                          className="aspect-square rounded-xl border border-slate-100 bg-white overflow-hidden cursor-pointer hover:ring-2 hover:ring-violet-500 transition-all group relative"
-                        >
-                          {file.type === 'svg' ? (
-                            <div className="w-full h-full flex items-center justify-center p-2">
-                               <img src={file.url} alt={file.name} className="max-w-full max-h-full object-contain" />
-                               <span className="absolute top-1 right-1 bg-violet-500 text-[8px] text-white px-1.5 py-0.5 rounded font-black uppercase">SVG</span>
-                            </div>
-                          ) : (
-                            <img src={file.url} alt={file.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                          )}
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors" />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            )}
-
-            {activePanel === "templates" && (
-              <motion.div
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                key="templates"
                 className="space-y-6"
               >
-                <div className="flex items-center justify-between mb-4">
-                   <h2 className="text-xl font-bold">Templates</h2>
-                   <div className="flex gap-1">
-                      <div className="w-2 h-2 rounded-full bg-slate-200" />
-                      <div className="w-2 h-2 rounded-full bg-slate-200" />
-                   </div>
+                <div className="flex flex-col gap-4 sticky top-0 bg-white z-10 pb-4 border-b border-slate-50">
+                  <h2 className="text-xl font-bold">Uploads</h2>
+                  <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-tight">Your Media Library</p>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {[1, 2, 3, 4, 5, 6].map((i) => (
-                    <div 
-                      key={i} 
-                      className="aspect-[3/4] rounded-2xl bg-slate-100 border border-slate-200 overflow-hidden cursor-pointer hover:ring-4 hover:ring-violet-500/20 hover:border-violet-500 transition-all shadow-md relative group"
-                      onClick={() => {
-                        addImage(`https://picsum.photos/seed/bg${i}/800/600`);
-                      }}
-                    >
-                      <img 
-                        src={`https://picsum.photos/seed/template${i}/300/400`} 
-                        alt="Template" 
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" 
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                         <span className="text-[10px] text-white font-bold bg-violet-600 px-2 py-1 rounded-full shadow-lg">USE READY</span>
+
+                <div className="space-y-6">
+                  <div 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="group relative cursor-pointer"
+                  >
+                    <div className="absolute -inset-1 bg-gradient-to-r from-violet-600 to-indigo-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
+                    <div className="relative px-6 py-10 bg-white border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center gap-3 group-hover:border-violet-400 transition-colors">
+                      <div className="w-12 h-12 bg-violet-50 text-violet-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <Upload size={24} />
                       </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-slate-700">Upload Media</p>
+                        <p className="text-[10px] text-slate-400 mt-1">Images or SVG files supported</p>
+                      </div>
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        hidden 
+                        accept="image/*,.svg" 
+                        onChange={handleFileUpload} 
+                      />
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between border-l-4 border-indigo-500 pl-3">
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recent Uploads</h3>
+                      <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{uploadedFiles.length} items</span>
+                    </div>
+
+                    {uploadedFiles.length === 0 ? (
+                      <div className="py-20 text-center space-y-3 opacity-40">
+                        <div className="w-12 h-12 border-2 border-slate-200 rounded-full flex items-center justify-center mx-auto">
+                          <ImageIcon size={20} className="text-slate-300" />
+                        </div>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Library is empty</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-3">
+                        {uploadedFiles.map((file) => (
+                          <motion.button
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            key={file.id}
+                            onClick={() => {
+                              if (file.type === 'svg') addSVG(file.url);
+                              else addImage(file.url);
+                            }}
+                            className="aspect-square rounded-xl bg-slate-50 border border-slate-100 hover:border-violet-400 overflow-hidden relative group shadow-sm transition-all"
+                          >
+                            <img src={file.url} className="w-full h-full object-contain p-2" alt={file.name} />
+                            <div className="absolute inset-0 bg-violet-600/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <Plus className="text-violet-600 bg-white p-1 rounded-full shadow-lg" size={24} />
+                            </div>
+                          </motion.button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </motion.div>
             )}
+
+
           </AnimatePresence>
         </div>
       </div>
@@ -687,9 +619,57 @@ export default function CanvasEditor() {
                     <span className="text-[10px] font-black w-10 text-center tracking-tighter">{zoom}%</span>
                     <button onClick={() => setZoom(prev => Math.min(200, prev + 10))} className="p-1 hover:bg-white rounded shadow-sm text-slate-400 hover:text-violet-600"><Plus size={14}/></button>
                  </div>
-                 <button onClick={() => exportToFile('png')} className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-violet-500/30 flex items-center gap-2">
-                    <Download size={14}/> Export
-                 </button>
+                 <div className="relative">
+                   <button 
+                     onClick={() => setIsExportOpen(!isExportOpen)} 
+                     className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-violet-500/30 flex items-center gap-2"
+                   >
+                      <Download size={14}/> Export
+                   </button>
+
+                   <AnimatePresence>
+                     {isExportOpen && (
+                       <>
+                         <div 
+                           className="fixed inset-0 z-40" 
+                           onClick={() => setIsExportOpen(false)} 
+                         />
+                         <motion.div
+                           initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                           animate={{ opacity: 1, y: 0, scale: 1 }}
+                           exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                           className="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-2xl border border-slate-100 p-2 z-50 overflow-hidden"
+                         >
+                            <div className="px-3 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 mb-1">
+                               Choose Format
+                            </div>
+                            {[
+                              { id: 'png', label: 'PNG Image', desc: 'Best for web & shared', icon: ImageIcon, color: 'text-blue-500' },
+                              { id: 'svg', label: 'SVG Vector', desc: 'Scalable graphics', icon: Layers, color: 'text-orange-500' },
+                              { id: 'jpeg', label: 'JPEG Photo', desc: 'Smaller file size', icon: ImageIcon, color: 'text-green-500' }
+                            ].map((format) => (
+                              <button
+                                key={format.id}
+                                onClick={() => {
+                                  exportToFile(format.id);
+                                  setIsExportOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 p-3 hover:bg-slate-50 rounded-xl transition-all group"
+                              >
+                                <div className={cn("p-2 rounded-lg bg-slate-100 group-hover:bg-white group-hover:shadow-sm transition-all", format.color)}>
+                                  <format.icon size={16} />
+                                </div>
+                                <div className="text-left">
+                                  <p className="text-xs font-bold text-slate-700">{format.label}</p>
+                                  <p className="text-[10px] text-slate-400 font-medium">{format.desc}</p>
+                                </div>
+                              </button>
+                            ))}
+                         </motion.div>
+                       </>
+                     )}
+                   </AnimatePresence>
+                 </div>
                </div>
             </header>
 
@@ -710,123 +690,161 @@ export default function CanvasEditor() {
               </div>
             </div>
 
-            {/* Float Toolbar (Fixed Position) */}
-            {selectedObject && (
+             {/* Compact Floating Toolbar */}
+             {selectedObject && (
               <motion.div 
-                initial={{ opacity: 0, y: 40, scale: 0.95 }}
+                initial={{ opacity: 0, y: 20, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                className="absolute bottom-10 left-1/2 -translate-x-1/2 px-4 py-3 bg-white/90 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl flex items-center gap-4 z-40 overflow-visible"
+                onMouseDown={(e) => { e.stopPropagation(); if(e.nativeEvent) e.nativeEvent.stopImmediatePropagation(); }}
+                onPointerDown={(e) => { e.stopPropagation(); if(e.nativeEvent) e.nativeEvent.stopImmediatePropagation(); }}
+                onMouseUp={(e) => { e.stopPropagation(); if(e.nativeEvent) e.nativeEvent.stopImmediatePropagation(); }}
+                onClick={(e) => { e.stopPropagation(); if(e.nativeEvent) e.nativeEvent.stopImmediatePropagation(); }}
+                className="absolute bottom-8 left-1/2 -translate-x-1/2 px-3 py-2 bg-white/98 backdrop-blur-3xl border border-slate-200/60 rounded-[28px] shadow-[0_15px_40px_-10px_rgba(0,0,0,0.12)] flex items-center gap-2.5 z-40"
               >
-                 {/* Color Picker Native */}
-                 <div className="flex flex-col items-center gap-1 group relative">
-                    <div className="w-8 h-8 rounded-full border-2 border-white shadow-md cursor-pointer overflow-hidden" style={{ background: selectedObject.fill }}>
-                       <input 
-                         type="color" 
-                         value={selectedObject.fill === 'transparent' ? '#ffffff' : selectedObject.fill}
-                         onChange={(e) => updateFill(e.target.value)}
-                         className="opacity-0 w-full h-full cursor-pointer"
-                       />
+                  {/* Section 1: Colors */}
+                  <div className="flex items-center gap-2 px-1">
+                    <div className="flex flex-col items-center gap-0.5 group relative">
+                        <div className="w-9 h-9 rounded-full border-2 border-white shadow-[0_2px_8px_rgba(0,0,0,0.1)] cursor-pointer overflow-hidden ring-1 ring-slate-100" style={{ background: selectedObject.fill }}>
+                           <input 
+                             type="color" 
+                             value={selectedObject.fill === 'transparent' ? '#ffffff' : selectedObject.fill}
+                             onChange={(e) => updateFill(e.target.value)}
+                             className="opacity-0 w-full h-full cursor-pointer"
+                           />
+                        </div>
+                        <span className="text-[7px] font-black uppercase text-slate-400">Fill</span>
                     </div>
-                    <span className="text-[8px] font-black uppercase text-slate-400">Fill</span>
-                 </div>
-
-                 {/* Stroke Picker Native */}
-                 <div className="flex flex-col items-center gap-1">
-                    <div className="w-8 h-8 rounded-full border-2 border-white shadow-md cursor-pointer overflow-hidden flex items-center justify-center bg-slate-50" style={{ borderColor: selectedObject.stroke || '#ddd' }}>
-                         <input 
-                           type="color" 
-                           value={selectedObject.stroke || '#000000'}
-                           onChange={(e) => updateStroke(e.target.value, selectedObject.strokeWidth || 2)}
-                           className="opacity-0 w-full h-full cursor-pointer"
-                         />
-                    </div>
-                    <span className="text-[8px] font-black uppercase text-slate-400">Border</span>
-                 </div>
-
-                 <div className="w-[1px] h-8 bg-slate-200 mx-2" />
-
-                 {/* Font Section for Text */}
-                 {selectedObject.type === 'i-text' && (
-                    <div className="flex items-center gap-2">
-                       <select 
-                         className="bg-slate-50 border border-slate-100 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-700 outline-none hover:border-violet-500 transition-all w-24"
-                         value={selectedObject.fontFamily}
-                         onChange={(e) => {
-                             selectedObject.set('fontFamily', e.target.value);
-                             canvas.renderAll();
-                             setSelectedObject({...selectedObject, fontFamily: e.target.value});
-                         }}
-                       >
-                         {customFonts.map(f => (
-                           <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-                         ))}
-                       </select>
-                       <div className="flex items-center gap-1 bg-slate-50 rounded-lg px-2 py-1 border border-slate-100">
-                          <Minus size={10} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
-                              const news = Math.max(1, (selectedObject.fontSize || 20) - 2);
-                              selectedObject.set('fontSize', news);
-                              canvas.renderAll();
-                              setSelectedObject({...selectedObject, fontSize: news});
-                          }}/>
-                          <span className="text-[10px] font-black w-6 text-center">{Math.round(selectedObject.fontSize)}</span>
-                          <Plus size={10} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
-                              const news = (selectedObject.fontSize || 20) + 2;
-                              selectedObject.set('fontSize', news);
-                              canvas.renderAll();
-                              setSelectedObject({...selectedObject, fontSize: news});
-                          }}/>
-                       </div>
-                    </div>
-                 )}
-
-                 <div className="w-[1px] h-8 bg-slate-200 mx-2" />
-
-                 <div className="flex items-center gap-1">
-                    <button onClick={groupObjects} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Group Objects">
-                        <Group size={16} className="text-violet-600" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Group</span>
-                    </button>
-                    <button onClick={ungroupObjects} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Ungroup Objects">
-                        <Ungroup size={16} className="text-orange-600" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Ungroup</span>
-                    </button>
-                    <button onClick={lockObject} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Lock">
-                        <Lock size={16} className="text-amber-500" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Lock</span>
-                    </button>
-                    
-                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
-                    
-                    <button onClick={bringToFront} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Bring to Front">
-                        <ChevronUp size={16} className="text-blue-500" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Front</span>
-                    </button>
-                    <button onClick={sendToBack} className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-1" title="Send to Back">
-                        <ChevronDown size={16} className="text-blue-500" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Back</span>
-                    </button>
-
-                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
 
                     <button 
-                      onClick={() => setIsLayersOpen(!isLayersOpen)} 
-                      className={cn(
-                        "p-2 rounded-xl transition-all flex flex-col items-center gap-1",
-                        isLayersOpen ? "bg-violet-50 text-violet-600" : "hover:bg-slate-50 text-slate-400"
-                      )}
-                      title="Layers"
+                      onClick={() => {
+                        updateFill('transparent');
+                        if (!selectedObject.stroke || selectedObject.stroke === 'transparent' || (selectedObject.strokeWidth || 0) === 0) {
+                          updateStroke('#333333', 1.5);
+                        }
+                      }}
+                      className="p-1.5 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-0.5"
                     >
-                        <Layers size={16} />
-                        <span className="text-[8px] font-black uppercase tracking-tighter">Layers</span>
+                        <Ban size={14} className="text-red-400" />
+                        <span className="text-[7px] font-black uppercase text-slate-400">None</span>
                     </button>
 
-                    <div className="w-[1px] h-6 bg-slate-100 mx-1" />
+                    <div className="flex flex-col items-center gap-0.5">
+                        <div className="w-9 h-9 rounded-full border-2 border-white shadow-[0_2px_8px_rgba(0,0,0,0.1)] cursor-pointer overflow-hidden flex items-center justify-center bg-slate-50 ring-1 ring-slate-100" style={{ borderColor: selectedObject.stroke || '#ddd' }}>
+                             <input 
+                               type="color" 
+                               value={selectedObject.stroke || '#000000'}
+                               onChange={(e) => {
+                                   const color = e.target.value;
+                                   updateStroke(color, selectedObject.strokeWidth || 1.5);
+                                   setSelectedObject(prev => ({ ...prev, stroke: color }));
+                               }}
+                               className="opacity-0 w-full h-full cursor-pointer"
+                             />
+                        </div>
+                        <span className="text-[7px] font-black uppercase text-slate-400">Border</span>
+                    </div>
+                  </div>
 
-                    <button onClick={deleteSelected} className="p-2 hover:bg-red-50 rounded-xl transition-all flex flex-col items-center gap-1 group" title="Delete">
+                  <div className="w-[1px] h-10 bg-slate-100/80 mx-1" />
+
+                  {/* Section 2: Precise Adjustments */}
+                  <div className="flex items-center gap-4 bg-slate-50/60 px-3 py-1.5 rounded-[20px] border border-slate-100/50">
+                    <div className="flex flex-col gap-1 w-16">
+                        <div className="flex items-center justify-between px-0.5">
+                            <span className="text-[7px] font-black uppercase text-slate-400">Weight</span>
+                            <span className="text-[7px] font-bold text-violet-600 font-mono">{Math.round(selectedObject.strokeWidth || 0)}</span>
+                        </div>
+                        <input 
+                          type="range" min="0" max="20" step="0.5"
+                          value={selectedObject.strokeWidth || 0}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                              const width = parseFloat(e.target.value);
+                              updateStroke(selectedObject.stroke, width);
+                              setSelectedObject(prev => ({ ...prev, strokeWidth: width }));
+                          }}
+                          className="w-full h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-violet-600 slider-thumb-sm"
+                        />
+                    </div>
+
+                    <div className="flex flex-col gap-1 w-16 border-l border-slate-200/60 pl-3">
+                        <div className="flex items-center justify-between px-0.5">
+                            <span className="text-[7px] font-black uppercase text-slate-400">Radius</span>
+                            <span className="text-[7px] font-bold text-violet-600 font-mono">{Math.round(selectedObject.rx || 0)}</span>
+                        </div>
+                        <input 
+                            type="range" min="0" max="50" step="1"
+                            value={selectedObject.rx || 0}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onChange={(e) => {
+                                const r = parseInt(e.target.value);
+                                updateBorderRadius(r);
+                                setSelectedObject(prev => ({ ...prev, rx: r, ry: r }));
+                            }}
+                            className="w-full h-1 bg-slate-200 rounded-full appearance-none cursor-pointer accent-violet-600 slider-thumb-sm"
+                        />
+                    </div>
+
+                    {selectedObject.type === 'i-text' && (
+                       <div className="flex flex-col gap-1 w-20 border-l border-slate-200/60 pl-3">
+                         <span className="text-[7px] font-black uppercase text-slate-400">Text Size</span>
+                         <div className="flex items-center justify-between bg-white rounded-lg px-2 py-0.5 ring-1 ring-slate-200/50">
+                            <Minus size={8} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
+                                const news = Math.max(1, (selectedObject.fontSize || 20) - 2);
+                                selectedObject.set('fontSize', news);
+                                canvas.renderAll();
+                                setSelectedObject(prev => ({...prev, fontSize: news}));
+                            }}/>
+                            <span className="text-[9px] font-bold text-slate-700">{Math.round(selectedObject.fontSize)}</span>
+                            <Plus size={8} className="text-slate-400 cursor-pointer hover:text-violet-600" onClick={() => {
+                                const news = (selectedObject.fontSize || 20) + 2;
+                                selectedObject.set('fontSize', news);
+                                canvas.renderAll();
+                                setSelectedObject(prev => ({...prev, fontSize: news}));
+                            }}/>
+                         </div>
+                       </div>
+                    )}
+                  </div>
+
+                  <div className="w-[1px] h-10 bg-slate-100/80 mx-1" />
+
+                  {/* Section 3: Hierarchy & Actions */}
+                  <div className="flex items-center gap-1.5 px-2">
+                    {[
+                      { icon: ChevronUp, label: 'Front', action: bringToFront, color: 'text-violet-600' },
+                      { icon: ChevronDown, label: 'Back', action: sendToBack, color: 'text-violet-600' },
+                    ].map((item, idx) => (
+                      <button 
+                        key={idx} 
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          item.action();
+                        }}
+                        className="p-2 hover:bg-slate-50 rounded-xl transition-all flex flex-col items-center gap-0.5 group"
+                      >
+                        <item.icon size={16} className={item.color} />
+                        <span className="text-[7px] font-black uppercase tracking-tighter text-slate-400 group-hover:text-slate-600">{item.label}</span>
+                      </button>
+                    ))}
+
+                    <div className="w-[1px] h-8 bg-slate-100/80 mx-2" />
+
+                    <button 
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        deleteSelected();
+                      }}
+                      className="p-2 hover:bg-red-50 rounded-xl transition-all flex flex-col items-center gap-0.5 group"
+                    >
                         <Trash2 size={16} className="text-red-400 group-hover:text-red-600" />
-                        <span className="text-[8px] font-black uppercase tracking-tighter text-slate-400">Delete</span>
+                        <span className="text-[7px] font-black uppercase tracking-tighter text-slate-400 group-hover:text-red-500">Delete</span>
                     </button>
-                 </div>
+                  </div>
               </motion.div>
             )}
         </div>
